@@ -2,7 +2,13 @@
 
 # Free AI Telegram bot
 
-A text chatbot for private chats and Telegram groups. It offers Google Gemini 3.5 Flash-Lite, Gemini 3.1 Flash-Lite, and OpenRouter's automatic free-model router when their keys are configured. It remembers a short conversation for each person in each chat while the process is running.
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:99035fa07b5a9650c27bfffefb82432b283de276d0613abb3207ba49eba6577f -->
+
+A text and photo chatbot for private chats and Telegram groups. It offers Google Gemini 3.5 Flash-Lite, Gemini 3.1 Flash-Lite, and OpenRouter's automatic free-model router when their keys are configured. It remembers a short conversation for each person in each chat while the process is running.
+
+<!-- /coderabbit-ai-generated:v1 -->
 
 ## Before you start
 
@@ -68,7 +74,14 @@ A general Gemini HTTP 400 can have other causes. Check the selected model, proje
 - In a private chat, send any text. Use `/models` (or `/model`) to choose your model, `/reset` to clear your conversation, and `/help` for instructions. Switching models also clears your conversation.
 - Add the bot to a group. Mention it, for example `@YourBot hello`, or reply to a bot message. To ask about another person's message, reply to it and mention the bot: `@YourBot explain this`.
 - For ordinary mentions in groups, disable privacy mode with BotFather's `/setprivacy`, then remove and re-add the bot to the group if necessary. With privacy disabled the bot can receive group messages, but it only responds to mentions, replies to itself, and its commands. Commands addressed to a different bot are ignored.
-- Model selection and memory are separate for each person in each chat. Group replies are visible to the group. The message, quoted text, and recent conversation are sent to the selected provider. Memory and model selections are held in RAM and are lost on restart. Only text and text captions on a quoted message are supported; images and voice messages are not processed.
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:44c6bc0cd5d85de34429c59c9f3b299e6a625dc2be8f9d6bf05c892a3fb2d91e -->
+
+- To extract text, send a photo with the caption `Extract the text`, or send a photo first and then ask your question. You can also reply to a photo with a question (mention the bot in a group). JPEG, PNG, and WebP image files are supported up to 5 MB. The selected provider receives the image. Free model availability and image support can vary.
+- Model selection and memory are separate for each person in each chat. Group replies are visible to the group. The message, quoted text, image, and recent conversation are sent to the selected provider. Memory, pending photos, and model selections are held in RAM and are lost on restart. Only the question and answer are remembered after processing; reply to or resend the photo for another visual question. Voice messages are not processed.
+
+<!-- /coderabbit-ai-generated:v1 -->
 - Free providers can be busy or limit requests. If that happens, wait or select another configured model. This is designed for light use, with a cap on simultaneous requests.
 
 ## Test
