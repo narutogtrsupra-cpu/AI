@@ -5,7 +5,7 @@ const MODELS = {
 };
 const MAX_IMAGE_BYTES = 5 * 1024 * 1024;
 const SYSTEM = 'You are a helpful, friendly chat assistant. Reply naturally in the language the user uses. Be concise unless detail is requested.';
-const HELP = 'Send me a message to chat. Send a photo with a question, or send a photo and then ask me about it. In a group, mention me (@username) or reply to one of my messages. To ask about someone else’s message, reply to it and mention me.\n\n/models — choose an AI model\n/reset — clear your conversation\n/help — show this help';
+const HELP = 'Send me a message to chat. Send a photo with a question, or send a photo and then ask me about it. In a group, mention me (@username) or reply to one of my messages. To ask about someone else’s message, reply to it and mention me.\n\n/image <description> — generate a picture (if enabled)\n/models — choose an AI model\n/reset — clear your conversation\n/help — show this help';
 
 export function splitMessage(text, limit = 3500) {
   const chunks = [];
@@ -18,7 +18,7 @@ export function splitMessage(text, limit = 3500) {
   return chunks;
 }
 
-export function createBot({ token, geminiKey, openrouterKey, fetchImpl = fetch, telegramBase = 'https://api.telegram.org', geminiBase = 'https://generativelanguage.googleapis.com', openrouterBase = 'https://openrouter.ai' }) {
+export function createBot({ token, geminiKey, openrouterKey, cloudflareAccountId, cloudflareToken, wait = ms => new Promise(resolve => setTimeout(resolve, ms)), fetchImpl = fetch, telegramBase = 'https://api.telegram.org', geminiBase = 'https://generativelanguage.googleapis.com', openrouterBase = 'https://openrouter.ai' }) {
   if (!token || token.includes('replace_with')) throw new Error('Set TELEGRAM_BOT_TOKEN to your BotFather token.');
   if (!geminiKey && !openrouterKey) throw new Error('Set at least one of GEMINI_API_KEY or OPENROUTER_API_KEY.');
   const available = Object.entries(MODELS).filter(([, model]) => model.provider === 'gemini' ? geminiKey : openrouterKey);
@@ -63,7 +63,7 @@ export function createBot({ token, geminiKey, openrouterKey, fetchImpl = fetch, 
       if (error instanceof SyntaxError) throw serviceError(`${service} returned an invalid response. Please try again.`, true);
       throw serviceError(`${service} connection failed (${networkCode(error)}). Check network access and try again.`, true);
     }
-    if (!response.ok || data.ok === false) {
+    if (!response.ok || data?.ok === false) {
       const status = Number.isInteger(data.error_code) && data.error_code >= 100 && data.error_code <= 599 ? data.error_code : response.status;
       if (status === 429) throw serviceError(`${service} is busy or its free limit was reached. Please try again later.`, true);
       if (service === 'Gemini' && status === 400) {
@@ -83,8 +83,25 @@ export function createBot({ token, geminiKey, openrouterKey, fetchImpl = fetch, 
     return data;
   }
   async function telegram(method, body = {}, timeout = 60000) {
-    const data = await jsonRequest(`${telegramBase}/bot${token}/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, 'Telegram', timeout);
-    return data.result;
+    const options = body instanceof FormData
+      ? { method: 'POST', body }
+      : { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) };
+    try {
+      const data = await jsonRequest(`${telegramBase}/bot${token}/${method}`, options, 'Telegram', timeout);
+      return data.result;
+    } catch (error) {
+      if (method === 'getMe') throw error;
+      throw serviceError(`${method}: ${error.message}`, error.retryable);
+    }
+  }
+  async function retryTelegram(operation) {
+    try {
+      return await operation();
+    } catch (error) {
+      if (!error.retryable) throw error;
+      await wait(1500);
+      return operation();
+    }
   }
   function session(key) {
     if (!sessions.has(key)) {
@@ -97,7 +114,7 @@ export function createBot({ token, geminiKey, openrouterKey, fetchImpl = fetch, 
   }
   async function send(chatId, text, replyId, extra = {}) {
     for (const chunk of splitMessage(text)) {
-      await telegram('sendMessage', { chat_id: chatId, text: chunk, ...(replyId ? { reply_parameters: { message_id: replyId, allow_sending_without_reply: true } } : {}), ...extra });
+      await retryTelegram(() => telegram('sendMessage', { chat_id: chatId, text: chunk, ...(replyId ? { reply_parameters: { message_id: replyId, allow_sending_without_reply: true } } : {}), ...extra }, 20000));
     }
   }
   function keyboard() {
@@ -117,29 +134,65 @@ export function createBot({ token, geminiKey, openrouterKey, fetchImpl = fetch, 
   async function downloadImage(image) {
     if (!image.id) throw new Error('I could not find that photo. Please send it again.');
     if (image.size > MAX_IMAGE_BYTES) throw new Error('This image is too large. Please send one under 5 MB.');
-    const file = await telegram('getFile', { file_id: image.id });
+    const file = await retryTelegram(() => telegram('getFile', { file_id: image.id }, 15000));
     if (file?.file_size > MAX_IMAGE_BYTES) throw new Error('This image is too large. Please send one under 5 MB.');
     const path = file?.file_path;
     if (typeof path !== 'string' || !/^[A-Za-z0-9_./-]+$/.test(path) || path.startsWith('/') || path.split('/').includes('..')) {
       throw new Error('I could not download that photo. Please send it again.');
     }
-    try {
-      const response = await fetchImpl(`${telegramBase}/file/bot${token}/${path}`, { signal: AbortSignal.timeout(30000), redirect: 'error' });
-      if (!response.ok || !response.body) throw new Error('download failed');
-      if (Number(response.headers.get('content-length')) > MAX_IMAGE_BYTES) throw new Error('too large');
-      const chunks = [];
-      let size = 0;
-      for await (const chunk of response.body) {
-        size += chunk.length;
-        if (size > MAX_IMAGE_BYTES) throw new Error('too large');
-        chunks.push(chunk);
+    return retryTelegram(async () => {
+      try {
+        const response = await fetchImpl(`${telegramBase}/file/bot${token}/${path}`, { signal: AbortSignal.timeout(30000), redirect: 'error' });
+        if (!response.ok || !response.body) {
+          await response.body?.cancel();
+          throw serviceError('I could not download that photo from Telegram. Please resend it.', response.status >= 500);
+        }
+        if (Number(response.headers.get('content-length')) > MAX_IMAGE_BYTES) {
+          await response.body.cancel();
+          throw serviceError('This image is too large. Please send one under 5 MB.');
+        }
+        const chunks = [];
+        let size = 0;
+        for await (const chunk of response.body) {
+          size += chunk.length;
+          if (size > MAX_IMAGE_BYTES) throw serviceError('This image is too large. Please send one under 5 MB.');
+          chunks.push(chunk);
+        }
+        if (!size) throw serviceError('Telegram returned an empty photo. Please resend it.');
+        return { mime: image.mime, data: Buffer.concat(chunks).toString('base64') };
+      } catch (error) {
+        if (typeof error.retryable === 'boolean') throw error;
+        throw serviceError(`Telegram photo download failed (${networkCode(error)}). Please resend the photo.`, true);
       }
-      if (!size) throw new Error('download failed');
-      return { mime: image.mime, data: Buffer.concat(chunks).toString('base64') };
-    } catch (error) {
-      if (error.message === 'too large') throw new Error('This image is too large. Please send one under 5 MB.');
-      throw new Error('I could not download that photo from Telegram. Please try again.');
+    });
+  }
+  async function generatePicture(prompt) {
+    const data = await jsonRequest(
+      `https://api.cloudflare.com/client/v4/accounts/${encodeURIComponent(cloudflareAccountId)}/ai/run/@cf/black-forest-labs/flux-1-schnell`,
+      {
+        method: 'POST',
+        headers: { authorization: `Bearer ${cloudflareToken}`, 'content-type': 'application/json' },
+        body: JSON.stringify({ prompt, steps: 4 }),
+      },
+      'Cloudflare Workers AI',
+      90000,
+    );
+    const encoded = data?.result?.image;
+    if (typeof encoded !== 'string' || encoded.length > Math.ceil(MAX_IMAGE_BYTES / 3) * 4) {
+      throw new Error('The image service did not return a usable picture. Check the Workers AI settings and daily allowance.');
     }
+    const bytes = Buffer.from(encoded, 'base64');
+    if (bytes.length > MAX_IMAGE_BYTES || bytes[0] !== 0xff || bytes[1] !== 0xd8 || bytes[2] !== 0xff) {
+      throw new Error('The image service did not return a usable JPEG.');
+    }
+    return bytes;
+  }
+  async function sendPicture(msg, bytes) {
+    const body = new FormData();
+    body.set('chat_id', String(msg.chat.id));
+    body.set('photo', new Blob([bytes], { type: 'image/jpeg' }), 'generated.jpg');
+    body.set('reply_parameters', JSON.stringify({ message_id: msg.message_id, allow_sending_without_reply: true }));
+    await retryTelegram(() => telegram('sendPhoto', body, 30000));
   }
   async function generate(model, history, prompt, image) {
     const turns = [...history, { role: 'user', text: prompt }];
@@ -178,6 +231,35 @@ export function createBot({ token, geminiKey, openrouterKey, fetchImpl = fetch, 
     const ownImage = imageFrom(msg);
     if (!text && !ownImage) return;
     const key = `${msg.chat.id}:${msg.from.id}`;
+    const picture = msg.text?.match(/^\/image(?:@([A-Za-z0-9_]+))?(?:\s+([\s\S]*))?$/i);
+    if (picture) {
+      if ((picture[1] && picture[1].toLowerCase() !== username?.toLowerCase()) ||
+          (!picture[1] && msg.chat.type !== 'private' && msg.reply_to_message?.from?.id !== botId)) return;
+      const description = picture[2]?.trim();
+      if (!cloudflareAccountId || !cloudflareToken) {
+        return send(msg.chat.id, 'Image generation is not enabled. Ask the bot owner to configure Cloudflare Workers AI.', msg.message_id);
+      }
+      if (!description || Array.from(description).length > 2048) {
+        return send(msg.chat.id, 'Use /image followed by a description of up to 2048 characters.', msg.message_id);
+      }
+      if (busy.has(key) || active >= 5) {
+        return send(msg.chat.id, 'Please wait for the current request to finish and try again.', msg.message_id);
+      }
+      busy.add(key); active++;
+      try {
+        void telegram('sendChatAction', { chat_id: msg.chat.id, action: 'upload_photo' }, 3000).catch(() => {});
+        let bytes;
+        try {
+          bytes = await generatePicture(description);
+        } catch (error) {
+          return await send(msg.chat.id, error.message, msg.message_id);
+        }
+        await sendPicture(msg, bytes);
+      } finally {
+        busy.delete(key); active--;
+      }
+      return;
+    }
     const command = text.match(/^\/(start|help|models|model|reset)(?:@([A-Za-z0-9_]+))?(?:\s|$)/i);
     if (command && command[2] && command[2].toLowerCase() !== username?.toLowerCase()) return;
     if (command) {
@@ -211,17 +293,21 @@ export function createBot({ token, geminiKey, openrouterKey, fetchImpl = fetch, 
     const historyRef = userSession.history;
     const history = historyRef.slice();
     try {
-      await telegram('sendChatAction', { chat_id: msg.chat.id, action: 'typing' }).catch(() => {});
-      const image = imageRef ? await downloadImage(imageRef) : null;
-      const answer = await generate(MODELS[selected], history, prompt, image);
+      void telegram('sendChatAction', { chat_id: msg.chat.id, action: 'typing' }, 3000).catch(() => {});
+      let answer;
+      try {
+        const image = imageRef ? await downloadImage(imageRef) : null;
+        answer = await generate(MODELS[selected], history, prompt, image);
+      } catch (error) {
+        return await send(msg.chat.id, error.message || 'Something went wrong. Please try again later.', msg.message_id);
+      }
       await send(msg.chat.id, answer, msg.message_id);
       // A model switch or reset while the request was running must stay effective.
       if (sessions.get(key) === userSession && userSession.model === selected && userSession.history === historyRef) {
-        userSession.history = [...history, { role: 'user', text: image ? `[Photo attached] ${prompt}` : prompt }, { role: 'assistant', text: answer.slice(0, 6000) }].slice(-12);
+        userSession.history = [...history, { role: 'user', text: imageRef ? `[Photo attached] ${prompt}` : prompt }, { role: 'assistant', text: answer.slice(0, 6000) }].slice(-12);
         if (userSession.pendingImage === imageRef) userSession.pendingImage = null;
       }
-    } catch (error) { await send(msg.chat.id, error.message || 'Something went wrong. Please try again later.', msg.message_id); }
-    finally { busy.delete(key); active--; }
+    } finally { busy.delete(key); active--; }
   }
   // Track the history object as well as its contents so /reset can invalidate an in-flight request.
   async function handle(update) { return handleUpdate(update); }

@@ -4,7 +4,7 @@ import { connectTelegram } from './startup.js';
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
 
 async function main() {
-  const bot = createBot({ token: process.env.TELEGRAM_BOT_TOKEN, geminiKey: process.env.GEMINI_API_KEY, openrouterKey: process.env.OPENROUTER_API_KEY });
+  const bot = createBot({ token: process.env.TELEGRAM_BOT_TOKEN, geminiKey: process.env.GEMINI_API_KEY, openrouterKey: process.env.OPENROUTER_API_KEY, cloudflareAccountId: process.env.CLOUDFLARE_ACCOUNT_ID?.trim(), cloudflareToken: process.env.CLOUDFLARE_API_TOKEN?.trim() });
   let stopping = false;
   process.on('SIGTERM', () => { stopping = true; });
   process.on('SIGINT', () => { stopping = true; });

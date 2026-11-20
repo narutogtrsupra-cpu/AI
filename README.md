@@ -84,8 +84,23 @@ A general Gemini HTTP 400 can have other causes. Check the selected model, proje
 <!-- /coderabbit-ai-generated:v1 -->
 - Free providers can be busy or limit requests. If that happens, wait or select another configured model. This is designed for light use, with a cap on simultaneous requests.
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:f26a7aecd1488b28e8732067f7291f0d1f815b7c9878f29bf512f7327dbf468d -->
+
+## Generate an image
+
+1. Keep your Cloudflare account on the [Workers Free plan](https://developers.cloudflare.com/workers-ai/platform/pricing/). Workers AI has a shared daily free allowance; the bot does not switch to another service when you reach it.
+2. In Cloudflare **Workers AI → Use REST API**, create a Workers AI API token and copy the account ID. See the [Workers AI REST setup guide](https://developers.cloudflare.com/workers-ai/get-started/rest-api/).
+3. Set `CLOUDFLARE_ACCOUNT_ID` and `CLOUDFLARE_API_TOKEN` in FadeHost and deploy. Keep your existing chat provider key.
+4. Send `/image a blue cat reading a book` in a private chat. In a group, use `/image@YourBot a blue cat reading a book`. The bot sends your description to [Cloudflare FLUX.1 Schnell](https://developers.cloudflare.com/workers-ai/models/flux-1-schnell/).
+
+For a Telegram timeout that continues after redeployment, check the FadeHost logs for the operation name (for example, `sendMessage` or `getUpdates`). The bot retries photo downloads and reply delivery once on temporary failures. A reply may appear twice if Telegram accepted the first send but its response timed out.
+
 ## Test
 
+
+<!-- /coderabbit-ai-generated:v1 -->
 ```sh
 npm test
 ```
