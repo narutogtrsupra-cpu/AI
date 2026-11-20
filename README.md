@@ -51,8 +51,20 @@ An HTTP response, including a redirect, shows that this command reached Telegram
 
 
 <!-- /coderabbit-ai-generated:v1 -->
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:aab7ca0084545d31f339eedae0e7927f5d439c797cb22abe02c7e5843ca5ac05 -->
+
+## Gemini request problems
+
+If the bot says Gemini rejected the API key, create or copy a key from [Google AI Studio](https://aistudio.google.com/apikey), set `GEMINI_API_KEY` to that key in FadeHost's environment settings, save, and restart the app. Use a free-tier Google project with billing disabled. Never send the key in a Telegram chat or share it in a screenshot.
+
+A general Gemini HTTP 400 can have other causes. Check the selected model, project and API access in Google AI Studio, and try another configured model with `/models`. See [Google's troubleshooting guide](https://ai.google.dev/gemini-api/docs/troubleshooting).
+
 ## Use in Telegram
 
+
+<!-- /coderabbit-ai-generated:v1 -->
 - In a private chat, send any text. Use `/models` (or `/model`) to choose your model, `/reset` to clear your conversation, and `/help` for instructions. Switching models also clears your conversation.
 - Add the bot to a group. Mention it, for example `@YourBot hello`, or reply to a bot message. To ask about another person's message, reply to it and mention the bot: `@YourBot explain this`.
 - For ordinary mentions in groups, disable privacy mode with BotFather's `/setprivacy`, then remove and re-add the bot to the group if necessary. With privacy disabled the bot can receive group messages, but it only responds to mentions, replies to itself, and its commands. Commands addressed to a different bot are ignored.

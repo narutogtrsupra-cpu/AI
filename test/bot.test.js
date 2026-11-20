@@ -99,3 +99,33 @@ test('Telegram rejects bad tokens without retrying', async () => {
     return true;
   });
 });
+
+test('Gemini invalid key response gives a specific safe message', async () => {
+  const sent = [];
+  const bot = createBot({ token: 'test-token', geminiKey: 'private-gemini-key', fetchImpl: async (url, options) => {
+    if (url.endsWith('/getMe')) return Response.json({ ok: true, result: { id: 42, username: 'HelperBot' } });
+    if (url.endsWith('/sendMessage')) { sent.push(JSON.parse(options.body).text); return Response.json({ ok: true, result: true }); }
+    if (url.includes('generateContent')) return Response.json({ error: { code: 400, status: 'INVALID_ARGUMENT', message: 'private-gemini-key', details: [{ reason: 'API_KEY_INVALID', metadata: { leaked: 'private-gemini-key' } }] } }, { status: 400 });
+    return Response.json({ ok: true, result: true });
+  } });
+  await bot.initialize();
+  await bot.handle(message('hello'));
+  assert.match(sent.at(-1), /Gemini rejected the API key/);
+  assert.match(sent.at(-1), /GEMINI_API_KEY/);
+  assert.ok(!sent.at(-1).includes('private-gemini-key'));
+});
+
+test('other Gemini 400 errors do not claim the key is invalid', async () => {
+  const sent = [];
+  const bot = createBot({ token: 'test-token', geminiKey: 'private-gemini-key', fetchImpl: async (url, options) => {
+    if (url.endsWith('/getMe')) return Response.json({ ok: true, result: { id: 42, username: 'HelperBot' } });
+    if (url.endsWith('/sendMessage')) { sent.push(JSON.parse(options.body).text); return Response.json({ ok: true, result: true }); }
+    if (url.includes('generateContent')) return Response.json({ error: { code: 400, message: 'private-gemini-key', status: 'INVALID_ARGUMENT' } }, { status: 400 });
+    return Response.json({ ok: true, result: true });
+  } });
+  await bot.initialize();
+  await bot.handle(message('hello'));
+  assert.match(sent.at(-1), /Gemini rejected the request \(HTTP 400\)/);
+  assert.doesNotMatch(sent.at(-1), /rejected the API key/);
+  assert.ok(!sent.at(-1).includes('private-gemini-key'));
+});

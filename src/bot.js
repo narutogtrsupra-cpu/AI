@@ -65,6 +65,14 @@ export function createBot({ token, geminiKey, openrouterKey, fetchImpl = fetch, 
     if (!response.ok || data.ok === false) {
       const status = Number.isInteger(data.error_code) && data.error_code >= 100 && data.error_code <= 599 ? data.error_code : response.status;
       if (status === 429) throw serviceError(`${service} is busy or its free limit was reached. Please try again later.`, true);
+      if (service === 'Gemini' && status === 400) {
+        // Google's structured reason is safe to match; do not expose its raw error message or metadata.
+        const details = Array.isArray(data.error?.details) ? data.error.details : [];
+        if (details.some(detail => detail?.reason === 'API_KEY_INVALID')) {
+          throw serviceError('Gemini rejected the API key. The bot owner should check GEMINI_API_KEY in the host settings and use a valid Google AI Studio API key.');
+        }
+        throw serviceError('Gemini rejected the request (HTTP 400). The bot owner should check the Gemini key, model access, and provider settings.');
+      }
       if (status === 401 || status === 403 || (service === 'Telegram' && status === 404)) {
         throw serviceError(service === 'Telegram' ? 'Telegram rejected the bot token or access. Check TELEGRAM_BOT_TOKEN in your host settings.' : `${service} rejected its API key or access. Check the bot configuration.`);
       }
