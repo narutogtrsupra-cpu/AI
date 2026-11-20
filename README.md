@@ -31,8 +31,26 @@ There are no external packages to install. Alternatively, set the same environme
 3. In the app's environment variables, set `TELEGRAM_BOT_TOKEN` and at least one of `GEMINI_API_KEY` and `OPENROUTER_API_KEY`. Use a Gemini project without billing enabled. Set the start command to `npm start` if the panel asks for one.
 4. Deploy and check the console for `Connected as @...`. Open your bot in Telegram and send `/start`, then `/models` to choose a configured model. If it does not start, check the token, keys, Node version, and console. If Telegram reports a polling conflict, stop other instances and remove any old webhook.
 
+<!-- coderabbit-ai-generated:v1 -->
+
+<!-- coderabbit-ai-generated-section:v1:1b1d49d209e58882c877f3a16bb6da084d389508efe375d1437d97a8e2d062c9 -->
+
 FadeHost advertises one free always-on bot per person, with 256 MB RAM, 3 GB disk, and a daily traffic limit. Confirm the current plan in the panel. Deployment requires your own FadeHost account and tokens.
 
+### Telegram connection problems
+
+The bot first contacts Telegram's `getMe` API. If the console says `Telegram connection failed`, it will retry temporary failures automatically. `TIMEOUT`, `ENETUNREACH`, or `UND_ERR_CONNECT_TIMEOUT` can indicate a host network problem; `ENOTFOUND` or `EAI_AGAIN` can indicate DNS trouble. If the error persists, ask FadeHost support to check DNS and outgoing HTTPS access to `api.telegram.org` on port 443 from your bot's container. Share the error code, but never your bot token or API keys. If the console says Telegram rejected the token, check the exact `TELEGRAM_BOT_TOKEN` value from BotFather and restart the bot.
+
+If your host provides a terminal, you can test the network without exposing your token:
+
+```sh
+curl -I --connect-timeout 10 --max-time 15 https://api.telegram.org
+```
+
+An HTTP response, including a redirect, shows that this command reached Telegram; a DNS or connection timeout should be investigated with the host. This test does not verify your token or prove that Node.js can connect.
+
+
+<!-- /coderabbit-ai-generated:v1 -->
 ## Use in Telegram
 
 - In a private chat, send any text. Use `/models` (or `/model`) to choose your model, `/reset` to clear your conversation, and `/help` for instructions. Switching models also clears your conversation.

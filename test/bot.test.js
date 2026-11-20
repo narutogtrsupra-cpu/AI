@@ -68,3 +68,34 @@ test('requires credentials and splits long Unicode messages safely', () => {
   assert.equal(parts.join(''), source);
   assert.ok(parts.every(part => part.length <= 3500));
 });
+
+test('Telegram startup reports safe network codes and retries until it connects', async () => {
+  const { connectTelegram } = await import('../src/startup.js');
+  let attempts = 0;
+  const waits = [];
+  const logs = [];
+  const token = 'secret-token';
+  const bot = createBot({ token, geminiKey: 'secret-key', fetchImpl: async () => {
+    attempts++;
+    if (attempts === 1) throw new TypeError(`failed for ${token}`, { cause: Object.assign(new Error('secret-key'), { code: 'ENETUNREACH' }) });
+    if (attempts === 2) return Response.json({ ok: false, error_code: 503 }, { status: 503 });
+    return Response.json({ ok: true, result: { id: 42, username: 'HelperBot' } });
+  } });
+  const me = await connectTelegram(bot, { wait: async ms => waits.push(ms), log: line => logs.push(line), isStopping: () => false });
+  assert.equal(me.username, 'HelperBot');
+  assert.deepEqual(waits, [5000, 10000]);
+  assert.match(logs[0], /Telegram connection failed \(ENETUNREACH\)/);
+  assert.match(logs[1], /Telegram request failed \(HTTP 503\)/);
+  assert.ok(!logs.join().includes(token));
+  assert.ok(!logs.join().includes('secret-key'));
+});
+
+test('Telegram rejects bad tokens without retrying', async () => {
+  const { connectTelegram } = await import('../src/startup.js');
+  const bot = createBot({ token: 'secret-token', geminiKey: 'x', fetchImpl: async () => Response.json({ ok: false, error_code: 404, description: 'secret-token' }, { status: 404 }) });
+  await assert.rejects(connectTelegram(bot, { wait: () => assert.fail('must not retry'), log: () => {}, isStopping: () => false }), error => {
+    assert.match(error.message, /TELEGRAM_BOT_TOKEN/);
+    assert.ok(!error.message.includes('secret-token'));
+    return true;
+  });
+});

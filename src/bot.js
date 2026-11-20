@@ -27,22 +27,54 @@ export function createBot({ token, geminiKey, openrouterKey, fetchImpl = fetch, 
   let botId;
   let username;
 
-  async function jsonRequest(url, options, timeout = 60000) {
+  // Only include known error codes in logs. Network error messages may contain URLs or secrets.
+  function networkCode(error) {
+    const allowed = new Set(['ENOTFOUND', 'EAI_AGAIN', 'ECONNREFUSED', 'ECONNRESET', 'ETIMEDOUT', 'ENETUNREACH', 'EHOSTUNREACH', 'UND_ERR_CONNECT_TIMEOUT', 'CERT_HAS_EXPIRED', 'UNABLE_TO_VERIFY_LEAF_SIGNATURE']);
+    const pending = [error];
+    const seen = new Set();
+    while (pending.length && seen.size < 20) {
+      const item = pending.shift();
+      if (!item || typeof item !== 'object' || seen.has(item)) continue;
+      seen.add(item);
+      if (allowed.has(item.code)) return item.code;
+      if (item.name === 'TimeoutError') return 'TIMEOUT';
+      if (item.cause) pending.push(item.cause);
+      if (Array.isArray(item.errors)) pending.push(...item.errors);
+    }
+    return 'NETWORK_ERROR';
+  }
+  function serviceError(message, retryable = false) {
+    const error = new Error(message);
+    error.retryable = retryable;
+    return error;
+  }
+  async function jsonRequest(url, options, service, timeout = 60000) {
     let response;
-    try { response = await fetchImpl(url, { ...options, signal: AbortSignal.timeout(timeout) }); }
-    catch { throw new Error('The service could not be reached. Please try again.'); }
     let data;
-    try { data = await response.json(); } catch { throw new Error('The service returned an invalid response.'); }
+    try {
+      response = await fetchImpl(url, { ...options, signal: AbortSignal.timeout(timeout) });
+      data = await response.json();
+    } catch (error) {
+      // Non-JSON error responses still provide a useful HTTP status.
+      if (response && !response.ok) {
+        throw serviceError(`${service} returned HTTP ${response.status}.`, response.status === 429 || response.status >= 500);
+      }
+      if (error instanceof SyntaxError) throw serviceError(`${service} returned an invalid response. Please try again.`, true);
+      throw serviceError(`${service} connection failed (${networkCode(error)}). Check network access and try again.`, true);
+    }
     if (!response.ok || data.ok === false) {
-      if (response.status === 429 || data.error_code === 429) throw new Error('The service is busy or its free limit was reached. Please try again later.');
-      if (response.status === 401 || response.status === 403) throw new Error('The service rejected its API key or access. Check the bot configuration.');
-      if (response.status === 409 || data.error_code === 409) throw new Error('Telegram polling conflict. Stop other bot instances and check for an active webhook.');
-      throw new Error(`Service request failed (${response.status}). Please try again later.`);
+      const status = Number.isInteger(data.error_code) && data.error_code >= 100 && data.error_code <= 599 ? data.error_code : response.status;
+      if (status === 429) throw serviceError(`${service} is busy or its free limit was reached. Please try again later.`, true);
+      if (status === 401 || status === 403 || (service === 'Telegram' && status === 404)) {
+        throw serviceError(service === 'Telegram' ? 'Telegram rejected the bot token or access. Check TELEGRAM_BOT_TOKEN in your host settings.' : `${service} rejected its API key or access. Check the bot configuration.`);
+      }
+      if (service === 'Telegram' && status === 409) throw serviceError('Telegram polling conflict. Stop other bot instances and check for an active webhook.');
+      throw serviceError(`${service} request failed (HTTP ${status}). Please try again later.`, status >= 500);
     }
     return data;
   }
   async function telegram(method, body = {}, timeout = 60000) {
-    const data = await jsonRequest(`${telegramBase}/bot${token}/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, timeout);
+    const data = await jsonRequest(`${telegramBase}/bot${token}/${method}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) }, 'Telegram', timeout);
     return data.result;
   }
   function session(key) {
@@ -68,7 +100,7 @@ export function createBot({ token, geminiKey, openrouterKey, fetchImpl = fetch, 
       const data = await jsonRequest(`${geminiBase}/v1beta/models/${model.id}:generateContent`, {
         method: 'POST', headers: { 'content-type': 'application/json', 'x-goog-api-key': geminiKey },
         body: JSON.stringify({ systemInstruction: { parts: [{ text: SYSTEM }] }, contents: turns.map(turn => ({ role: turn.role === 'assistant' ? 'model' : 'user', parts: [{ text: turn.text }] })), generationConfig: { maxOutputTokens: 1024 } }),
-      });
+      }, 'Gemini');
       const answer = data.candidates?.[0]?.content?.parts?.filter(part => part.text && !part.thought).map(part => part.text).join('');
       if (!answer) throw new Error('The model could not produce an answer. Please try a different question.');
       return answer;
@@ -76,7 +108,7 @@ export function createBot({ token, geminiKey, openrouterKey, fetchImpl = fetch, 
     const data = await jsonRequest(`${openrouterBase}/api/v1/chat/completions`, {
       method: 'POST', headers: { 'content-type': 'application/json', authorization: `Bearer ${openrouterKey}` },
       body: JSON.stringify({ model: model.id, messages: [{ role: 'system', content: SYSTEM }, ...turns.map(turn => ({ role: turn.role, content: turn.text }))], max_tokens: 1024 }),
-    });
+    }, 'OpenRouter');
     const answer = data.choices?.[0]?.message?.content;
     if (typeof answer !== 'string' || !answer.trim()) throw new Error('The model could not produce an answer. Please try a different question.');
     return answer;
@@ -133,7 +165,7 @@ export function createBot({ token, geminiKey, openrouterKey, fetchImpl = fetch, 
   }
   // Track the history object as well as its contents so /reset can invalidate an in-flight request.
   async function handle(update) { return handleUpdate(update); }
-  async function initialize() { const me = await telegram('getMe'); botId = me.id; username = me.username; if (!username) throw new Error('Telegram did not return a bot username.'); return me; }
+  async function initialize() { const me = await telegram('getMe', {}, 15000); botId = me.id; username = me.username; if (!username) throw new Error('Telegram did not return a bot username.'); return me; }
   async function poll(offset) { return telegram('getUpdates', { offset, timeout: 30, allowed_updates: ['message', 'callback_query'] }, 40000); }
   return { initialize, poll, handle, telegram };
 }
